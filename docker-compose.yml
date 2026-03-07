@@ -3,16 +3,11 @@
 # =============================================================================
 #
 # Usage:
-#   cp .env.example .env          # copy and edit environment variables
-#   docker compose up             # start gateway + lightwalletd
-#   docker compose up -d          # start in background
-#   docker compose logs -f        # follow logs
-#   docker compose down           # stop and remove containers
+#   cp .env.example .env
+#   docker compose up
 #
-# Upstream variants:
-#   docker compose up                          # default — lightwalletd
-#   docker compose -f docker-compose.yml \
-#     -f docker-compose.zaino.yml up           # Zaino upstream
+# Points at an external public lightwalletd endpoint.
+# No local zcashd / zebrad node required.
 #
 # Health check:
 #   curl http://localhost:8080/healthz
@@ -21,9 +16,6 @@
 
 services:
 
-  # ---------------------------------------------------------------------------
-  # gateway — Envoy gRPC-web proxy
-  # ---------------------------------------------------------------------------
   gateway:
     build:
       context: ./gateway
@@ -32,26 +24,19 @@ services:
     container_name: zcash-gateway
 
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"   # gRPC-web (browser-facing)
-      # Admin port intentionally not exposed to host — access via:
-      # docker exec zcash-gateway curl http://127.0.0.1:9901/stats
-      # Uncomment only for local debugging:
+      - "${GATEWAY_PORT:-8080}:8080"
+      # Uncomment for local admin debugging only:
       # - "127.0.0.1:9901:9901"
 
     environment:
-      # Upstream host resolves to the lightwalletd service name on the
-      # compose network. Override in .env for external upstreams.
-      UPSTREAM_HOST: ${UPSTREAM_HOST:-lightwalletd}
+      UPSTREAM_HOST: ${UPSTREAM_HOST:-mainnet.lightwalletd.com}
       UPSTREAM_PORT: ${UPSTREAM_PORT:-9067}
 
     volumes:
-      # Mount config files directly — no rebuild required when tweaking config.
       - ./gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro
       - ./gateway/cors.yaml:/etc/envoy/cors.yaml:ro
 
-    depends_on:
-      lightwalletd:
-        condition: service_healthy
+    # depends_on removed — no local upstream service to wait for
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
@@ -71,70 +56,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ---------------------------------------------------------------------------
-  # lightwalletd — Zcash light wallet server (ZIP-307 gRPC backend)
-  #
-  # For local development we connect to Zcash mainnet via a public zcashd node.
-  # Set ZCASH_CONF_PATH to point at your own zcashd config for full local stack.
-  # ---------------------------------------------------------------------------
-  lightwalletd:
-    image: electriccoinco/lightwalletd:v0.4.16   # pinned — do not use latest
-    container_name: zcash-lightwalletd
-
-    command:
-      - "--grpc-bind-addr=0.0.0.0:9067"
-      - "--zcash-conf-path=/etc/lightwalletd/zcash.conf"
-      - "--data-dir=/var/lib/lightwalletd"
-      - "--log-level=info"
-      - "--no-tls-very-insecure"   # TLS terminated at gateway — not needed upstream
-
-    volumes:
-      - ./config/zcash.conf:/etc/lightwalletd/zcash.conf:ro
-      - lightwalletd_data:/var/lib/lightwalletd
-
-    expose:
-      - "9067"   # Internal only — gateway is the only allowed caller
-
-    healthcheck:
-      # grpc_health_probe checks the CompactTxStreamer service directly.
-      # Install: https://github.com/grpc-ecosystem/grpc-health-probe
-      test:
-        - "CMD"
-        - "grpc_health_probe"
-        - "-addr=localhost:9067"
-        - "-rpc-timeout=5s"
-      interval: 15s
-      timeout: 8s
-      retries: 3
-      start_period: 30s   # lightwalletd needs time to start syncing
-
-    restart: unless-stopped
-
-    networks:
-      - gateway_net
-
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-# -----------------------------------------------------------------------------
-# VOLUMES
-# -----------------------------------------------------------------------------
-volumes:
-  lightwalletd_data:
-    # Persists the lightwalletd block cache across container restarts.
-    # Delete with: docker compose down -v
-    driver: local
-
-# -----------------------------------------------------------------------------
-# NETWORKS
-# -----------------------------------------------------------------------------
 networks:
   gateway_net:
-    # Isolated bridge network — lightwalletd is not reachable from the host,
-    # only from the gateway container. This enforces the intended access pattern:
-    # all external traffic enters through the gateway.
     driver: bridge
-    internal: false   # gateway needs outbound access for upstream DNS resolution
+    internal: false
