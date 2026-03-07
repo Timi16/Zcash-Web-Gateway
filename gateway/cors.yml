@@ -1,0 +1,158 @@
+# =============================================================================
+# cors.yaml — CORS Policy for Zcash Web Gateway
+# =============================================================================
+#
+# Included by envoy.yaml via the virtual host typed_per_filter_config block.
+#
+# Why CORS matters for gRPC-web:
+#   Browsers enforce CORS on all cross-origin requests. A gRPC-web wallet
+#   app served from https://wallet.example.com cannot call a gateway at
+#   https://gateway.example.com without the gateway explicitly allowing it.
+#
+#   gRPC-web requires two CORS headers that plain REST APIs often omit:
+#     - expose_headers must include grpc-status and grpc-message so the
+#       browser JavaScript can read the gRPC response status.
+#     - allow_headers must include x-grpc-web and grpc-timeout or the
+#       browser rejects the preflight before the request is sent.
+#
+# Preflight flow:
+#   1. Browser sends OPTIONS request with Origin + Access-Control-Request-*
+#   2. Envoy cors filter responds with Access-Control-Allow-* headers
+#   3. Browser checks the response — if allowed, sends the actual request
+#   4. Envoy attaches Access-Control-Allow-Origin to every response
+#
+# Environments:
+#   This file ships two configurations — development and production.
+#   Switch by setting the CORS_POLICY env var in your .env file.
+#
+#   development:  allows all origins (*)    — for local dev and testing
+#   production:   allows only listed origins — tighten before going live
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# DEVELOPMENT policy — allow all origins.
+#
+# Use this for:
+#   - Local docker compose development
+#   - Testnet gateways
+#   - Public open endpoints where any wallet app should be able to connect
+#
+# WARNING: Do not use this for a production gateway serving a specific wallet
+# application. Use the production policy below and list your origin explicitly.
+# -----------------------------------------------------------------------------
+cors_policy_development:
+  # Allow any origin. Safe for open public endpoints.
+  allow_origin_string_match:
+    - safe_regex:
+        google_re2: {}
+        regex: ".*"
+
+  # HTTP methods browsers are allowed to use.
+  # POST  — all gRPC-web unary and server-streaming calls
+  # GET   — health checks, preflight fallback
+  # OPTIONS — preflight requests themselves
+  allow_methods: "GET, POST, OPTIONS"
+
+  # Headers browsers are allowed to send.
+  #
+  # content-type    — must be application/grpc-web or application/grpc-web+proto
+  # x-grpc-web      — required by the gRPC-web spec to identify the protocol
+  # grpc-timeout    — deadline propagation from client to server
+  # x-user-agent    — sent by the grpc-web JS library
+  # authorization   — bearer tokens for authenticated endpoints (future use)
+  allow_headers: "content-type, x-grpc-web, grpc-timeout, x-user-agent, authorization"
+
+  # Headers the browser JavaScript is allowed to read from responses.
+  #
+  # grpc-status               — numeric gRPC status code (0 = OK)
+  # grpc-message              — human-readable error string on failure
+  # grpc-status-details-bin   — binary-encoded google.rpc.Status for rich errors
+  #
+  # If these are missing, the JS gRPC-web client cannot detect errors.
+  # Wallet UI shows a spinner forever instead of a useful error message.
+  expose_headers: "grpc-status, grpc-message, grpc-status-details-bin"
+
+  # How long the browser caches the preflight response (seconds).
+  # 1728000 = 20 days. Reduces repeated OPTIONS round-trips for wallet apps
+  # that make many calls to the same gateway.
+  max_age: "1728000"
+
+  # Do not allow cookies or auth credentials to be sent cross-origin.
+  # Zcash gateways are stateless — no session cookies, no credential sharing.
+  allow_credentials: false
+
+
+# -----------------------------------------------------------------------------
+# PRODUCTION policy — explicit origin allowlist.
+#
+# Use this for:
+#   - Production gateways tied to a specific wallet application
+#   - Gateways where you want to prevent other apps from piggybacking
+#
+# How to use:
+#   Replace the example origins below with your actual wallet app origins.
+#   Each entry is an exact string match — no wildcards on subdomains.
+#   Add one entry per allowed origin.
+#
+# Example:
+#   Your wallet app lives at https://wallet.yourproject.com
+#   Your staging app lives at https://staging.yourproject.com
+#   → Add both as exact matches below.
+# -----------------------------------------------------------------------------
+cors_policy_production:
+  allow_origin_string_match:
+    # Exact match — replace with your wallet app's actual origin.
+    # Format: scheme + "://" + hostname (+ optional :port for non-standard ports)
+
+    # Local development — remove in strict production if not needed
+    - exact: "http://localhost:3000"
+    - exact: "http://localhost:8080"
+
+  allow_methods: "GET, POST, OPTIONS"
+
+  allow_headers: "content-type, x-grpc-web, grpc-timeout, x-user-agent, authorization"
+
+  expose_headers: "grpc-status, grpc-message, grpc-status-details-bin"
+
+  max_age: "1728000"
+
+  allow_credentials: false
+
+
+# =============================================================================
+# Reference: gRPC-web CORS requirements
+# =============================================================================
+#
+# Required allow_headers (must ALL be present or requests fail):
+#   content-type        gRPC-web content type negotiation
+#   x-grpc-web          gRPC-web protocol marker
+#   grpc-timeout        deadline propagation
+#
+# Required expose_headers (must ALL be present or JS client cannot read status):
+#   grpc-status         numeric status code
+#   grpc-message        error message string
+#   grpc-status-details-bin  rich error details (proto-encoded)
+#
+# Common CORS mistakes with gRPC-web:
+#
+#   1. Missing expose_headers
+#      Symptom: wallet JS sees every call as "OK" even on errors,
+#               or status code is always undefined.
+#      Fix: ensure grpc-status and grpc-message are in expose_headers.
+#
+#   2. Missing x-grpc-web in allow_headers
+#      Symptom: all requests blocked at preflight with CORS error.
+#      Fix: add x-grpc-web to allow_headers.
+#
+#   3. allow_credentials: true with wildcard origin
+#      Symptom: browser rejects the response with CORS error even though
+#               the gateway sent Access-Control-Allow-Origin: *.
+#      Fix: credentials + wildcard is illegal per spec. Use exact origins
+#           or keep allow_credentials: false (correct for Zcash gateways).
+#
+#   4. Forgetting OPTIONS in allow_methods
+#      Symptom: preflight is blocked; all requests fail before being sent.
+#      Fix: OPTIONS must always be in allow_methods.
+#
+# =============================================================================

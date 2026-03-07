@@ -1,0 +1,297 @@
+// -----------------------------------------------------------------------------
+// service.proto — Zcash Light Client Protocol (ZIP-307)
+//
+// Vendored from:
+//   https://github.com/zcash/librustzcash/blob/main/zcash_client_backend/proto/service.proto
+//
+// Do NOT edit manually. To update, replace with the upstream file and re-run:
+//   zcash-gateway-test --target http://localhost:8080 --profile lightwalletd
+//
+// Vendored at commit: 2f3a6c1 (2024-09-01)
+// -----------------------------------------------------------------------------
+
+syntax = "proto3";
+
+package cash.z.wallet.sdk.rpc;
+
+option java_package        = "cash.z.wallet.sdk.internal.rpc";
+option java_multiple_files = true;
+option swift_prefix        = "Zcash";
+
+import "compact_formats.proto";
+
+// -----------------------------------------------------------------------------
+// Primitive types
+// -----------------------------------------------------------------------------
+
+// ChainSpec identifies the Zcash network. Reserved for future use.
+message ChainSpec {}
+
+// Empty is used where no data is needed in a request or response.
+message Empty {}
+
+// Duration carries a wall-clock interval used by Ping.
+message Duration {
+  int64 interval_us = 1; // microseconds
+}
+
+// Address wraps a single Zcash address string.
+message Address {
+  string address = 1;
+}
+
+// AddressList wraps multiple Zcash address strings.
+message AddressList {
+  repeated string addresses = 1;
+}
+
+// Balance holds a confirmed total in zatoshis.
+message Balance {
+  int64 value_zat = 1;
+}
+
+// Exclude carries txids the wallet already knows so the server skips them.
+message Exclude {
+  repeated bytes txid = 1; // each entry is a 32-byte txid
+}
+
+// -----------------------------------------------------------------------------
+// Block types
+// -----------------------------------------------------------------------------
+
+// BlockID identifies a block by height, hash, or both.
+message BlockID {
+  uint64 height = 1;
+  bytes  hash   = 2; // 32-byte little-endian block hash
+}
+
+// BlockRange is an inclusive range of block heights.
+message BlockRange {
+  BlockID start = 1;
+  BlockID end   = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Transaction types
+// -----------------------------------------------------------------------------
+
+// TxFilter identifies a transaction by txid, or by block position.
+message TxFilter {
+  BlockID block = 1; // optional
+  uint64  index = 2; // position within block
+  bytes   hash  = 3; // 32-byte txid (preferred)
+}
+
+// RawTransaction carries serialised transaction bytes.
+//
+// IMPORTANT — gateway must never modify the `data` field.
+// Any byte change breaks ZIP-317 fee validation on the receiving wallet.
+message RawTransaction {
+  bytes  data   = 1; // raw serialised transaction bytes
+  uint64 height = 2; // block height; 0 if unconfirmed
+}
+
+// SendResponse is returned after a transaction broadcast attempt.
+message SendResponse {
+  int32  error_code    = 1; // 0 = success
+  string error_message = 2; // empty on success
+}
+
+// -----------------------------------------------------------------------------
+// Transparent address types
+// -----------------------------------------------------------------------------
+
+// TransparentAddressBlockFilter filters transactions by address and range.
+message TransparentAddressBlockFilter {
+  string     address     = 1;
+  BlockRange block_range = 2;
+}
+
+// -----------------------------------------------------------------------------
+// Tree state types
+// -----------------------------------------------------------------------------
+
+// TreeState holds the note commitment tree state at a given block.
+// Wallets use this to resume scanning from a checkpoint.
+message TreeState {
+  string chain        = 1; // "main" | "test" | "regtest"
+  uint64 height       = 2;
+  string hash         = 3; // block hash (hex)
+  uint32 time         = 4; // Unix timestamp
+  string sapling_tree = 5; // hex-encoded Sapling note commitment tree
+  string orchard_tree = 6; // hex-encoded Orchard note commitment tree
+}
+
+// -----------------------------------------------------------------------------
+// UTXO types
+// -----------------------------------------------------------------------------
+
+// GetAddressUtxosArg requests the transparent UTXO set for a set of addresses.
+message GetAddressUtxosArg {
+  repeated string addresses    = 1;
+  uint64          start_height = 2;
+  uint32          max_entries  = 3; // 0 = no limit
+}
+
+// GetAddressUtxosReply describes a single unspent transparent output.
+message GetAddressUtxosReply {
+  string address   = 1;
+  bytes  txid      = 2; // 32-byte txid
+  int32  index     = 3; // output index
+  bytes  script    = 4; // output script
+  int64  value_zat = 5; // value in zatoshis
+  uint64 height    = 6; // confirmed block height
+}
+
+// GetAddressUtxosReplyList is the batched variant of GetAddressUtxosReply.
+message GetAddressUtxosReplyList {
+  repeated GetAddressUtxosReply address_utxos = 1;
+}
+
+// -----------------------------------------------------------------------------
+// Subtree root types (efficient shielded sync, NU5+)
+// -----------------------------------------------------------------------------
+
+// ShieldedProtocol identifies a shielded pool.
+// IMPORTANT — sapling MUST be 0; protobuf requires the first enum value = 0.
+enum ShieldedProtocol {
+  sapling = 0;
+  orchard = 1;
+}
+
+// GetSubtreeRootsArg requests note commitment subtree roots for a pool.
+message GetSubtreeRootsArg {
+  uint32           start_index = 1; // first subtree index to return
+  ShieldedProtocol pool        = 2;
+  uint32           max_entries = 3; // 0 = no limit
+}
+
+// SubtreeRoot is one node in the note commitment subtree.
+message SubtreeRoot {
+  bytes  root_hash                = 1; // 32-byte root hash
+  bytes  completing_block_hash    = 2; // hash of block completing this subtree
+  uint64 completing_block_height  = 3;
+}
+
+// -----------------------------------------------------------------------------
+// Server info
+// -----------------------------------------------------------------------------
+
+// LightdInfo carries metadata about the upstream server instance.
+// Wallets use this to detect version mismatches and confirm network identity.
+message LightdInfo {
+  string version                   = 1;
+  string vendor                    = 2; // "ECC lightwalletd" | "Zaino"
+  bool   taddr_support             = 3;
+  string chain_name                = 4; // "main" | "test" | "regtest"
+  uint64 sapling_activation_height = 5;
+  string consensus_branch_id       = 6; // hex-encoded
+  uint64 block_height              = 7; // latest known block
+  string git_commit                = 8;
+  string branch                    = 9;
+  string build_date                = 10;
+  string build_user                = 11;
+  uint64 estimated_height          = 12;
+  string zcashd_build              = 13;
+  string zcashd_subversion         = 14;
+}
+
+// Diagnostic ping response.
+message PingResponse {
+  int64 entry = 1; // server receive timestamp (microseconds)
+  int64 exit  = 2; // server send timestamp (microseconds)
+}
+
+// =============================================================================
+// CompactTxStreamer — the ZIP-307 service.
+//
+// This is the only service the gateway proxies.
+// Each method has an explicit route in envoy.yaml with a purpose-tuned timeout:
+//
+//   Unary (fast reads)       GetLatestBlock, GetBlock, GetTreeState    10s
+//   Unary (writes)           SendTransaction                           30s
+//   Unary (medium)           GetTransaction, GetAddressUtxos           15s
+//   Server-streaming (sync)  GetBlockRange, GetMempoolTx               0s (no timeout)
+//   Server-streaming (other) GetTaddressTxids, GetSubtreeRoots         30s
+// =============================================================================
+service CompactTxStreamer {
+
+  // --- Block retrieval -------------------------------------------------------
+
+  // GetLatestBlock returns the height and hash of the current chain tip.
+  // Wallets call this on startup to measure how far behind they are.
+  rpc GetLatestBlock(ChainSpec) returns (BlockID);
+
+  // GetBlock returns a single CompactBlock by height or hash.
+  rpc GetBlock(BlockID) returns (stream CompactBlock);
+
+  // GetBlockNullifiers returns a block with nullifier data only.
+  // Used for spend detection without downloading full compact block data.
+  rpc GetBlockNullifiers(BlockID) returns (stream CompactBlock);
+
+  // GetBlockRange streams CompactBlocks for an inclusive height range.
+  // This is the primary wallet sync path. Streams stay open 30-90 seconds.
+  // Gateway timeout: 0s — never interrupt an in-progress sync.
+  rpc GetBlockRange(BlockRange) returns (stream CompactBlock);
+
+  // GetBlockRangeNullifiers streams nullifier-only compact blocks.
+  rpc GetBlockRangeNullifiers(BlockRange) returns (stream CompactBlock);
+
+  // --- Transaction retrieval and submission ----------------------------------
+
+  // GetTransaction returns a raw transaction by txid or block+index.
+  rpc GetTransaction(TxFilter) returns (RawTransaction);
+
+  // SendTransaction broadcasts a signed raw transaction to the p2p network.
+  // Gateway timeout: 30s — allow time for broadcast propagation.
+  // NOTE: request body passes through unmodified — see RawTransaction comment.
+  rpc SendTransaction(RawTransaction) returns (SendResponse);
+
+  // --- Transparent address operations ----------------------------------------
+
+  // GetTaddressTxids streams raw transactions for a t-addr in a block range.
+  rpc GetTaddressTxids(TransparentAddressBlockFilter) returns (stream RawTransaction);
+
+  // GetTaddressBalance returns the confirmed balance for a set of t-addresses.
+  rpc GetTaddressBalance(AddressList) returns (Balance);
+
+  // GetTaddressBalanceStream is the client-streaming variant of the above.
+  rpc GetTaddressBalanceStream(stream Address) returns (Balance);
+
+  // --- Mempool ---------------------------------------------------------------
+
+  // GetMempoolTx streams compact transactions currently in the mempool.
+  // Gateway timeout: 0s — long-lived stream, never interrupt.
+  rpc GetMempoolTx(Exclude) returns (stream CompactTx);
+
+  // GetMempoolStream streams raw mempool transactions.
+  // Gateway timeout: 0s — long-lived stream, never interrupt.
+  rpc GetMempoolStream(Empty) returns (stream RawTransaction);
+
+  // --- Note commitment trees -------------------------------------------------
+
+  // GetTreeState returns the note commitment tree state at a given block.
+  rpc GetTreeState(BlockID) returns (TreeState);
+
+  // GetLatestTreeState returns the tree state at the current chain tip.
+  rpc GetLatestTreeState(Empty) returns (TreeState);
+
+  // GetSubtreeRoots streams subtree roots for efficient post-NU5 shielded sync.
+  rpc GetSubtreeRoots(GetSubtreeRootsArg) returns (stream SubtreeRoot);
+
+  // --- UTXO operations -------------------------------------------------------
+
+  // GetAddressUtxos returns the full UTXO set for a list of addresses (batch).
+  rpc GetAddressUtxos(GetAddressUtxosArg) returns (GetAddressUtxosReplyList);
+
+  // GetAddressUtxosStream is the server-streaming variant of the above.
+  rpc GetAddressUtxosStream(GetAddressUtxosArg) returns (stream GetAddressUtxosReply);
+
+  // --- Utility ---------------------------------------------------------------
+
+  // GetLightdInfo returns metadata about this server instance.
+  rpc GetLightdInfo(Empty) returns (LightdInfo);
+
+  // Ping measures round-trip latency. Diagnostic use only.
+  rpc Ping(Duration) returns (PingResponse);
+}

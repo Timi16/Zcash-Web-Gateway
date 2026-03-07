@@ -1,0 +1,14 @@
+# =============================================================================
+# .dockerignore — gateway build context
+# =============================================================================
+# Only the files Docker needs to build the gateway image are sent to the
+# daemon. Everything else is excluded to keep the build context small and
+# avoid accidentally copying secrets or local state into the image.
+# =============================================================================
+
+# Exclude everything by default
+**
+
+# Allow only what the Dockerfile COPYs
+!envoy.yaml
+!cors.yaml
