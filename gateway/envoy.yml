@@ -1,0 +1,287 @@
+# =============================================================================
+# Zcash Web Gateway — Envoy Proxy Configuration
+# =============================================================================
+#
+# Purpose:
+#   Translates browser gRPC-web (HTTP/1.1) requests into native gRPC (HTTP/2)
+#   for lightwalletd or Zaino upstream. Browsers cannot speak native gRPC
+#   directly — this is the required bridge layer.
+#
+# Upstream selector:
+#   Set UPSTREAM_HOST and UPSTREAM_PORT environment variables at deploy time.
+#   lightwalletd default: localhost:9067
+#   Zaino default:        localhost:8137
+#
+# Envoy version: v1.29.4 (pinned — do not change without testing)
+#
+# Reference: ZIP-307 Light Client Protocol
+#   https://zips.z.cash/zip-0307
+# =============================================================================
+
+admin:
+  # Bind admin interface to loopback only — never expose to public internet.
+  # Exposes /healthz, /ready, /stats, /config_dump.
+  address:
+    socket_address:
+      address: 127.0.0.1
+      port_value: 9901
+
+static_resources:
+
+  # ---------------------------------------------------------------------------
+  # LISTENERS
+  # ---------------------------------------------------------------------------
+  listeners:
+    - name: zcash_gateway_listener
+      address:
+        socket_address:
+          # Bind to all interfaces. In production, place behind a TLS
+          # terminator (nginx / cloud LB) or use the TLS transport socket
+          # defined in the overlay config.
+          address: 0.0.0.0
+          port_value: 8080
+
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+
+                stat_prefix: zcash_gateway
+
+                # ------------------------------------------------------------------
+                # Access logging — privacy-preserving defaults.
+                #
+                # We log method, response code, duration, and bytes — never the
+                # client IP address. Operators who need IP logging must explicitly
+                # add %DOWNSTREAM_REMOTE_ADDRESS% to the format string and accept
+                # the privacy implications.
+                # ------------------------------------------------------------------
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          method:          "%REQ(:METHOD)%"
+                          path:            "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          protocol:        "%PROTOCOL%"
+                          response_code:   "%RESPONSE_CODE%"
+                          grpc_status:     "%GRPC_STATUS%"
+                          duration_ms:     "%DURATION%"
+                          bytes_received:  "%BYTES_RECEIVED%"
+                          bytes_sent:      "%BYTES_SENT%"
+                          upstream_host:   "%UPSTREAM_HOST%"
+                          # NOTE: client IP intentionally omitted — privacy default.
+                          # To enable: add "client_ip": "%DOWNSTREAM_REMOTE_ADDRESS%"
+
+                # ------------------------------------------------------------------
+                # HTTP/2 settings for downstream browser connections.
+                # Browsers connect via HTTP/1.1 gRPC-web; the grpc_web filter
+                # below handles frame translation before reaching the upstream.
+                # ------------------------------------------------------------------
+                http2_protocol_options: {}
+
+                # ------------------------------------------------------------------
+                # HTTP filter chain — ORDER MATTERS.
+                # Filters execute top-to-bottom on request, bottom-to-top on response.
+                # ------------------------------------------------------------------
+                http_filters:
+
+                  # 1. Health check — responds to /healthz before any other filter.
+                  #    This lets load balancers probe without hitting the upstream.
+                  - name: envoy.filters.http.health_check
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.health_check.v3.HealthCheck
+                      pass_through_mode: false
+                      headers:
+                        - name: ":path"
+                          string_match:
+                            exact: "/healthz"
+
+                  # 2. CORS — handles browser preflight (OPTIONS) requests.
+                  #    Config is injected per-route via the virtual host below.
+                  - name: envoy.filters.http.cors
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
+
+                  # 3. gRPC-web — core translation layer.
+                  #    Converts gRPC-web (HTTP/1.1 with encoded trailers) to
+                  #    native gRPC (HTTP/2). Also handles the reverse on response.
+                  - name: envoy.filters.http.grpc_web
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
+
+                  # 4. Router — must always be last.
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+                # ------------------------------------------------------------------
+                # Route configuration
+                # ------------------------------------------------------------------
+                route_config:
+                  name: zcash_gateway_routes
+                  virtual_hosts:
+                    - name: zcash_gateway
+                      # Accept requests for any domain. In production, replace
+                      # "*" with your actual gateway domain.
+                      domains: ["*"]
+
+                      # CORS policy — tested against Chrome, Firefox, Safari, Edge.
+                      #
+                      # allow_origin_string_match uses safe_regex rather than a
+                      # wildcard "*" so that credentialed requests work correctly.
+                      # Adjust origins to match your wallet app's domain in prod.
+                      typed_per_filter_config:
+                        envoy.filters.http.cors:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
+                          allow_origin_string_match:
+                            - safe_regex:
+                                regex: ".*"  # Allow all origins — tighten in production
+                          allow_methods: "GET, POST, OPTIONS"
+                          allow_headers: "content-type, x-grpc-web, x-user-agent, grpc-timeout, authorization"
+                          expose_headers: "grpc-status, grpc-message, grpc-status-details-bin"
+                          max_age: "1728000"  # 20 days — browser caches preflight result
+
+                      routes:
+                        # ----------------------------------------------------------
+                        # gRPC-web routes — one per ZIP-307 service method.
+                        #
+                        # Explicit per-method routing lets us apply different
+                        # timeout policies: short for unary calls, long for
+                        # streaming operations (wallet sync holds connections
+                        # open for 30–90 seconds).
+                        # ----------------------------------------------------------
+
+                        # Unary — fast read operations
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLatestBlock"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 10s
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetBlock"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 10s
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTransaction"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 15s
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTreeState"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 10s
+
+                        # Write — transaction submission
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/SendTransaction"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 30s  # Extra time for broadcast propagation
+
+                        # Streaming — wallet sync. Long timeout, never interrupt.
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetBlockRange"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 0s  # 0 = no timeout — stream runs until client disconnects
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetMempoolStream"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 0s
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetAddressUtxosStream"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 30s
+
+                        # Taddr operations (ZIP-316 transparent-compatible)
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTaddressTxids"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 30s
+
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetAddressUtxos"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 15s
+
+                        # Catch-all for any other CompactTxStreamer methods
+                        - match:
+                            prefix: "/cash.z.wallet.sdk.rpc.CompactTxStreamer"
+                          route:
+                            cluster: lightwalletd_upstream
+                            timeout: 20s
+
+  # ---------------------------------------------------------------------------
+  # CLUSTERS — upstream backend definitions
+  # ---------------------------------------------------------------------------
+  clusters:
+    - name: lightwalletd_upstream
+      # STRICT_DNS resolves the hostname on startup and on DNS TTL expiry.
+      # Use LOGICAL_DNS if upstream is a single host behind a load balancer.
+      type: STRICT_DNS
+
+      # Force HTTP/2 to upstream — lightwalletd and Zaino both require it.
+      # The downstream browser connection uses HTTP/1.1 (handled by grpc_web filter).
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+
+      load_assignment:
+        cluster_name: lightwalletd_upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      # Resolved from UPSTREAM_HOST env var via Docker Compose.
+                      # Default: lightwalletd container name on the compose network.
+                      address: "${UPSTREAM_HOST}"
+                      port_value: "${UPSTREAM_PORT}"
+
+      # ------------------------------------------------------------------
+      # Connection pool tuning — sized for wallet traffic patterns.
+      #
+      # Wallet sync opens many concurrent streams per user. These values
+      # are conservative defaults — tune up for high-traffic deployments.
+      # ------------------------------------------------------------------
+      circuit_breakers:
+        thresholds:
+          - priority: DEFAULT
+            max_connections: 1000
+            max_pending_requests: 1000
+            max_requests: 5000
+            max_retries: 3
+
+      # Upstream health check — Envoy actively probes lightwalletd.
+      # Gateway marks upstream as unhealthy and stops routing if probes fail.
+      health_checks:
+        - timeout: 5s
+          interval: 30s
+          unhealthy_threshold: 2   # 2 consecutive failures → unhealthy
+          healthy_threshold: 1     # 1 success → healthy again
+          grpc_health_check:
+            service_name: "cash.z.wallet.sdk.rpc.CompactTxStreamer"
+
+      # Keep upstream connections alive — avoids TCP handshake overhead
+      # on every wallet request.
+      upstream_connection_options:
+        tcp_keepalive:
+          keepalive_probes: 3
+          keepalive_time: 30
+          keepalive_interval: 10

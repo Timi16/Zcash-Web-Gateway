@@ -1,0 +1,9 @@
+services: {}
+
+# Zaino overlay compose file (optional).
+#
+# Usage (with a base compose file):
+#   docker compose -f docker-compose.yml -f docker-compose.zaino.yml up --build
+#
+# Add your Zaino service (and any wiring to the gateway) under `services:`.
+
