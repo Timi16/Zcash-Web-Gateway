@@ -3,91 +3,68 @@
 # =============================================================================
 #
 # Build:
-#   docker build -t zcash-web-gateway:dev ./gateway
+#   docker compose up --build
 #
-# Run standalone (without compose):
-#   docker run --rm \
-#     -e UPSTREAM_HOST=localhost \
-#     -e UPSTREAM_PORT=9067 \
-#     -v $(pwd)/gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro \
-#     -p 8080:8080 \
-#     zcash-web-gateway:dev
+# Env vars required at runtime:
+#   UPSTREAM_HOST  — lightwalletd or Zaino hostname
+#   UPSTREAM_PORT  — 9067 (lightwalletd) or 8137 (Zaino)
 #
-# Image: envoyproxy/envoy:v1.29.4
-#   - Pinned digest ensures reproducible builds.
-#   - Contains getenvoy-package with envoy binary + required shared libs.
-#   - Base is Ubuntu 22.04 — well-known CVE coverage.
-#
+# envoy.yaml.tmpl contains ${UPSTREAM_HOST} and ${UPSTREAM_PORT} placeholders.
+# entrypoint.sh runs envsubst at container start, then exec's Envoy as PID 1.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Stage 1: config-validator
-#
-# Validates envoy.yaml before it ever reaches the runtime image.
-# A bad config file caught here saves a confusing runtime crash.
+# Substitutes default values into the template and validates the result.
+# Build fails here if envoy.yaml.tmpl is malformed — never ships broken config.
 # -----------------------------------------------------------------------------
 FROM envoyproxy/envoy:v1.29.4 AS config-validator
 
-WORKDIR /validate
+# Install envsubst (part of gettext-base)
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends gettext-base && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy config files for validation only
-COPY envoy.yaml  /etc/envoy/envoy.yaml
-COPY cors.yaml   /etc/envoy/cors.yaml
+COPY envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
+COPY cors.yaml       /etc/envoy/cors.yaml
 
-# --mode validate exits 0 on valid config, non-zero on any error.
-# Build fails here if the config is malformed — never ships broken config.
+# Substitute default values for validation only
+RUN UPSTREAM_HOST=localhost UPSTREAM_PORT=9067 \
+    envsubst '${UPSTREAM_HOST} ${UPSTREAM_PORT}' \
+    < /etc/envoy/envoy.yaml.tmpl \
+    > /tmp/envoy-validated.yaml
+
+# Validate the substituted config — exits non-zero on any error
 RUN envoy \
       --mode validate \
-      --config-path /etc/envoy/envoy.yaml \
+      --config-path /tmp/envoy-validated.yaml \
       --log-level warn
 
 
 # -----------------------------------------------------------------------------
 # Stage 2: runtime
-#
-# Minimal runtime image. No build tools, no shell utilities beyond what
-# Envoy needs. Attack surface is as small as we can make it.
+# Minimal image — only what Envoy and entrypoint.sh need.
 # -----------------------------------------------------------------------------
 FROM envoyproxy/envoy:v1.29.4 AS runtime
 
-# ---------------------------------------------------------------------------
-# Envoy runs as non-root by default in the official image (uid 101).
-# We make this explicit and ensure our files respect it.
-# ---------------------------------------------------------------------------
+# Install envsubst for the entrypoint script
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends gettext-base && \
+    rm -rf /var/lib/apt/lists/*
+
+# Non-root user (uid 101 is the envoy user in the official image)
 USER 101
 
-# ---------------------------------------------------------------------------
-# Copy validated config from stage 1.
-# Using --chown avoids a separate RUN chown layer.
-# ---------------------------------------------------------------------------
+# Copy validated template and supporting files
 COPY --from=config-validator --chown=101:101 \
-     /etc/envoy/envoy.yaml  /etc/envoy/envoy.yaml
+     /etc/envoy/envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
 
-COPY --chown=101:101 cors.yaml /etc/envoy/cors.yaml
+COPY --chown=101:101 cors.yaml      /etc/envoy/cors.yaml
+COPY --chown=101:101 entrypoint.sh  /entrypoint.sh
 
-# ---------------------------------------------------------------------------
 # Ports:
-#   8080 — gRPC-web listener (browser-facing, mapped in compose/helm)
-#   9901 — Envoy admin (loopback only, NOT exposed in compose)
-# ---------------------------------------------------------------------------
+#   8080 — gRPC-web listener (browser-facing)
+#   9901 — Envoy admin (loopback only, not exposed in compose)
 EXPOSE 8080
 
-# ---------------------------------------------------------------------------
-# Entrypoint — explicit args, no shell interpolation.
-#
-# --config-path       : load our config
-# --log-level         : info in production, debug for troubleshooting
-# --log-format        : json for structured log pipelines
-# --drain-time-s      : 20s graceful drain on SIGTERM before force-quit
-# --service-node      : identifies this instance in multi-gateway setups
-# --service-cluster   : logical cluster name for metrics/tracing
-# ---------------------------------------------------------------------------
-ENTRYPOINT [ \
-  "envoy", \
-  "--config-path",    "/etc/envoy/envoy.yaml", \
-  "--log-level",      "info", \
-  "--log-format",     "json", \
-  "--drain-time-s",   "20", \
-  "--service-node",   "zcash-gateway", \
-  "--service-cluster","zcash-web-gateway" \
-]
+ENTRYPOINT ["/entrypoint.sh"]

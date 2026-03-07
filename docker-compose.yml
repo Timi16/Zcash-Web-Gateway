@@ -1,5 +1,5 @@
 # =============================================================================
-# Zcash Web Gateway — Docker Compose
+# Zcash Web Gateway — Docker Compose (laptop test mode)
 # =============================================================================
 #
 # Usage:
@@ -33,7 +33,7 @@ services:
       UPSTREAM_PORT: ${UPSTREAM_PORT:-9067}
 
     volumes:
-      - ./gateway/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./gateway/envoy.yaml.tmpl:/etc/envoy/envoy.yaml.tmpl:ro
       - ./gateway/cors.yaml:/etc/envoy/cors.yaml:ro
 
     # depends_on removed — no local upstream service to wait for
