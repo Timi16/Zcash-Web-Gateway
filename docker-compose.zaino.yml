@@ -1,9 +1,73 @@
-services: {}
-
-# Zaino overlay compose file (optional).
+# =============================================================================
+# Zcash Web Gateway — Zaino upstream override
+# =============================================================================
 #
-# Usage (with a base compose file):
-#   docker compose -f docker-compose.yml -f docker-compose.zaino.yml up --build
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.zaino.yml up
 #
-# Add your Zaino service (and any wiring to the gateway) under `services:`.
+# This override:
+#   - Replaces lightwalletd with Zaino as the gRPC backend
+#   - Adjusts UPSTREAM_PORT to Zaino's default (8137)
+#   - Removes the lightwalletd dependency from gateway
+#
+# Zaino exposes two ports:
+#   8137 — ZIP-307 gRPC (what the gateway proxies)
+#   8232 — JSON-RPC    (NOT proxied — internal use only)
+# =============================================================================
 
+services:
+
+  gateway:
+    depends_on:
+      zaino:
+        condition: service_healthy
+    environment:
+      UPSTREAM_HOST: zaino
+      UPSTREAM_PORT: "8137"
+
+  # Disable lightwalletd when using Zaino
+  lightwalletd:
+    profiles:
+      - disabled
+
+  zaino:
+    image: zfnd/zaino:latest   # pin to a specific digest in production
+    container_name: zcash-zaino
+
+    command:
+      - "--grpc-bind-addr=0.0.0.0:8137"
+      - "--zebrad-uri=http://${ZEBRAD_HOST:-zebrad}:${ZEBRAD_PORT:-8232}"
+      - "--log-level=info"
+
+    expose:
+      - "8137"   # gRPC — proxied by gateway
+      # 8232 JSON-RPC is intentionally not exposed — out of scope for gateway
+
+    volumes:
+      - zaino_data:/var/lib/zaino
+
+    healthcheck:
+      test:
+        - "CMD"
+        - "grpc_health_probe"
+        - "-addr=localhost:8137"
+        - "-rpc-timeout=5s"
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  zaino_data:
+    driver: local
