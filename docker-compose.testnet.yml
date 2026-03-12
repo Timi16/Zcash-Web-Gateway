@@ -1,0 +1,168 @@
+# =============================================================================
+# Zcash Web Gateway — Full local testnet stack
+# =============================================================================
+#
+# Runs three services on one machine:
+#   zebrad       — Zcash testnet full node (Rust, Zcash Foundation)
+#   lightwalletd — ZIP-307 gRPC server, connects to zebrad RPC
+#   gateway      — Envoy gRPC-web proxy, connects to lightwalletd gRPC
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.testnet.yml up
+#
+# First run notes:
+#   zebrad will sync the testnet chain from genesis. This takes several hours
+#   and downloads ~20 GB. The chain state is stored in the named volume
+#   "zebrad-testnet-data" so subsequent restarts resume from last checkpoint.
+#
+#   lightwalletd will not start serving until zebrad has synced past the
+#   Sapling activation height (~280,000 on testnet). The depends_on + healthcheck
+#   delays startup, but expect lightwalletd to log "waiting for sapling blocks"
+#   for some time during initial sync.
+#
+# Ports exposed to host:
+#   8080  — gRPC-web gateway (browser wallet connects here)
+#   9067  — lightwalletd gRPC  (direct access, bypass gateway — test use only)
+#
+# Ports NOT exposed (internal Docker network only):
+#   18232 — zebrad JSON-RPC
+#
+# Health check:
+#   curl http://localhost:8080/healthz
+#
+# To watch zebrad sync progress:
+#   docker compose -f docker-compose.yml -f docker-compose.testnet.yml logs -f zebrad
+#
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # zebrad — Zcash testnet full node
+  # ---------------------------------------------------------------------------
+  zebrad:
+    image: zfnd/zebra:latest
+    container_name: zcash-zebrad-testnet
+
+    command: ["start"]
+
+    volumes:
+      # Testnet chain state — persists across container restarts.
+      # Remove this volume to resync from genesis: docker volume rm zcash-web-gateway_zebrad-testnet-data
+      - zebrad-testnet-data:/zebrad-cache
+      # Testnet node config
+      - ./config/zebrad.toml:/etc/zebrad/zebrad.toml:ro
+
+    # zebrad JSON-RPC is intentionally NOT exposed to the host.
+    # Lightwalletd accesses it on the internal Docker network only.
+    # ports:
+    #   - "127.0.0.1:18232:18232"  # uncomment for direct RPC debugging
+
+    healthcheck:
+      # zebrad's RPC responds to getblockchaininfo once the node is running.
+      # This does not mean it is fully synced — lightwalletd handles that wait.
+      test:
+        - "CMD"
+        - "sh"
+        - "-c"
+        - >
+          curl -sf --data-binary
+          '{"jsonrpc":"1.0","id":"hc","method":"getblockchaininfo","params":[]}'
+          -H 'content-type:text/plain;'
+          http://lightwalletd:lightwalletd@127.0.0.1:18232/
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # lightwalletd — ZIP-307 gRPC server
+  # ---------------------------------------------------------------------------
+  lightwalletd:
+    image: electriccoinco/lightwalletd:latest
+    container_name: zcash-lightwalletd-testnet
+
+    command:
+      - "server"
+      - "--grpc-bind-addr"
+      - "0.0.0.0:9067"
+      - "--zcash-conf-path"
+      - "/conf/zcash.conf"
+      - "--data-dir"
+      - "/var/lib/lightwalletd/db"
+      - "--log-file"
+      - "/dev/stdout"
+      - "--log-sys-output"
+      - "--no-tls-very-insecure"  # TLS handled by Envoy gateway, not lightwalletd
+
+    volumes:
+      - ./config/zcash.conf:/conf/zcash.conf:ro
+      - lightwalletd-testnet-data:/var/lib/lightwalletd/db
+
+    depends_on:
+      zebrad:
+        condition: service_healthy
+
+    # Expose 9067 to host for direct testing (bypass gateway).
+    # Remove in production — external traffic should go through the gateway only.
+    ports:
+      - "127.0.0.1:9067:9067"
+
+    healthcheck:
+      test:
+        - "CMD"
+        - "sh"
+        - "-c"
+        # grpc_health_probe checks the gRPC health service.
+        # Fallback: check if port is accepting connections.
+        - "nc -z 127.0.0.1 9067"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # gateway — Envoy gRPC-web proxy (overrides docker-compose.yml defaults)
+  # ---------------------------------------------------------------------------
+  gateway:
+    depends_on:
+      lightwalletd:
+        condition: service_healthy
+
+    environment:
+      UPSTREAM_HOST: lightwalletd
+      UPSTREAM_PORT: "9067"
+      # Plaintext HTTP/2 to upstream — lightwalletd is a local container
+      # running with --no-tls-very-insecure on the internal Docker network.
+      UPSTREAM_TLS: "false"
+
+# =============================================================================
+# Volumes — persistent chain state
+# =============================================================================
+volumes:
+  zebrad-testnet-data:
+    name: zcash-web-gateway_zebrad-testnet-data
+  lightwalletd-testnet-data:
+    name: zcash-web-gateway_lightwalletd-testnet-data
