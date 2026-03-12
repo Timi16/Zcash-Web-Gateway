@@ -26,7 +26,8 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists/*
 
 COPY envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
-COPY cors.yaml       /etc/envoy/cors.yaml
+# cors.yaml is a reference document only — Envoy static config has no include
+# mechanism so it is not copied into the image. See gateway/cors.yaml for notes.
 
 # Substitute default values for validation only
 RUN UPSTREAM_HOST=localhost UPSTREAM_PORT=9067 \
@@ -59,7 +60,6 @@ USER 101
 COPY --from=config-validator --chown=101:101 \
      /etc/envoy/envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
 
-COPY --chown=101:101 cors.yaml      /etc/envoy/cors.yaml
 COPY --chown=101:101 entrypoint.sh  /entrypoint.sh
 
 # Ports:
