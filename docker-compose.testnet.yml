@@ -41,6 +41,7 @@ services:
   # zebrad — Zcash testnet full node
   # ---------------------------------------------------------------------------
   zebrad:
+    platform: linux/amd64
     image: zfnd/zebra:latest
     container_name: zcash-zebrad-testnet
 
@@ -90,6 +91,7 @@ services:
   # lightwalletd — ZIP-307 gRPC server
   # ---------------------------------------------------------------------------
   lightwalletd:
+    platform: linux/amd64
     image: electriccoinco/lightwalletd:latest
     container_name: zcash-lightwalletd-testnet
 
