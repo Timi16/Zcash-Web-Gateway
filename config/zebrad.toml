@@ -1,0 +1,37 @@
+# =============================================================================
+# zebrad.toml — Zebra node configuration for testnet
+# =============================================================================
+#
+# Used by docker-compose.testnet.yml.
+# Zebrad syncs the Zcash testnet chain and exposes a JSON-RPC endpoint
+# that lightwalletd connects to.
+#
+# Cache: stored in a named Docker volume (zebrad-testnet-data) so chain
+# state survives container restarts. Testnet is ~20 GB — first sync takes
+# several hours. Subsequent restarts continue from the last cached state.
+#
+# =============================================================================
+
+[network]
+network = "Testnet"
+
+[state]
+# Docker volume mounted at /zebrad-cache — persists across restarts.
+cache_dir = "/zebrad-cache"
+
+[rpc]
+# Bind to all interfaces inside the Docker network so lightwalletd can reach it.
+# Do NOT expose port 18232 in docker-compose ports: — it is internal only.
+listen_addr = "0.0.0.0:18232"
+
+# Lightwalletd connects without credentials on the internal Docker network.
+# For production deployments outside Docker, enable cookie auth or set
+# explicit credentials and update zcash.conf accordingly.
+# enable_cookie_auth = false
+
+[sync]
+# Checkpoint sync speeds up initial testnet sync significantly.
+checkpoint_verify_concurrency_limit = 64
+
+[tracing]
+filter = "zebrad=info,tower=warn,hyper=warn"
