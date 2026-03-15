@@ -87,54 +87,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
 
-                  # 3. Rate limiting — per-connection token bucket, no external service.
-                  #
-                  #    Default limits (tuned for wallet traffic patterns):
-                  #      300 tokens / 60s fill interval per connection.
-                  #      A full wallet sync issues ~100-200 requests, so this gives
-                  #      headroom for one sync plus ongoing mempool polling.
-                  #
-                  #    Behaviour on exhaustion:
-                  #      Envoy returns HTTP 429. The gRPC-web client receives
-                  #      gRPC status RESOURCE_EXHAUSTED (code 8).
-                  #      Wallets should back off and retry — standard gRPC behaviour.
-                  #
-                  #    To tighten (e.g. public endpoint under abuse):
-                  #      Lower max_tokens and tokens_per_fill.
-                  #
-                  #    To relax (e.g. internal operator endpoint):
-                  #      Raise max_tokens or increase fill_interval.
-                  #
-                  - name: envoy.filters.http.local_ratelimit
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
-                      stat_prefix: zcash_gateway_ratelimit
-                      token_bucket:
-                        max_tokens: 300
-                        tokens_per_fill: 300
-                        fill_interval: 60s
-                      # Apply to every request by default.
-                      # Per-route overrides can be added in typed_per_filter_config.
-                      filter_enabled:
-                        runtime_key: local_rate_limit_enabled
-                        default_value:
-                          numerator: 100
-                          denominator: HUNDRED
-                      filter_enforced:
-                        runtime_key: local_rate_limit_enforced
-                        default_value:
-                          numerator: 100
-                          denominator: HUNDRED
-                      # Return gRPC-compatible 429 with Retry-After header.
-                      response_headers_to_add:
-                        - header:
-                            key: x-local-rate-limit
-                            value: "true"
-                        - header:
-                            key: retry-after
-                            value: "60"
-
-                  # 4. gRPC-web — core translation layer (HTTP/1.1 ↔ HTTP/2)
+                  # 3. gRPC-web — core translation layer (HTTP/1.1 ↔ HTTP/2)
                   - name: envoy.filters.http.grpc_web
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
@@ -284,7 +237,7 @@ static_resources:
 
       # TLS block injected here by entrypoint.sh based on UPSTREAM_TLS env var.
       # UPSTREAM_TLS=true  → TLS transport_socket with SNI (public endpoints)
-      # UPSTREAM_TLS=false → no block, plaintext HTTP/2 (local/testnet stacks)
+      # UPSTREAM_TLS=false → no block, plaintext HTTP/2 (local regtest stack)
 ${UPSTREAM_TLS_BLOCK}
       load_assignment:
         cluster_name: lightwalletd_upstream

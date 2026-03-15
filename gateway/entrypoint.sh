@@ -26,7 +26,7 @@ fi
 #
 #   false           — plaintext HTTP/2. Use when the upstream is a local
 #                     container running with --no-tls-very-insecure
-#                     (e.g. docker-compose.testnet.yml local stack).
+#                     (e.g. local regtest stack).
 #
 UPSTREAM_TLS="${UPSTREAM_TLS:-true}"
 

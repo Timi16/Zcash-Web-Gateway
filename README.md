@@ -1,27 +1,58 @@
 # Zcash Web Gateway
 
-A small containerized gateway intended to sit in front of Zcash-related services and expose a web-friendly interface (for example, via Envoy with a CORS policy).
+Local/dev gateway that exposes a browser-friendly gRPC-web interface in front
+of Zcash services. This repo intentionally avoids production hosting concerns.
 
 ## Repo layout
 
-- `gateway/` — gateway runtime configuration (Envoy) and Docker build context.
-- `proto/` — vendored protobuf definitions (ZIP-307).
-- `docker-compose.yml` — base local/dev compose.
-- `docker-compose.zaino.yml` — optional compose overlay for running alongside Zaino.
+- `gateway/` — Envoy config and Docker build context.
+- `proto/` — ZIP-307 protobuf definitions.
+- `docker-compose.yml` — local regtest stack (zebrad + lightwalletd + gateway).
+- `docker-compose.zaino.yml` — optional overlay to point the gateway at a public Zaino endpoint.
 
-## Quick start
+## Quick start (regtest + mainnet gateways)
+
+Create an `.env` from the example (optional but recommended):
+
+```sh
+cp .env.example .env
+```
 
 ```sh
 docker compose up --build
 ```
 
-With the Zaino overlay:
+Health check:
+
+```sh
+curl http://localhost:8080/healthz
+```
+
+Mainnet gateway (runs in parallel on a different port by default):
+
+```sh
+curl http://localhost:8081/healthz
+```
+
+## Optional: Zaino upstream (external)
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.zaino.yml up --build
 ```
 
+## Milestone self-test (local)
+
+1. Start the stack: `docker compose up --build`
+2. Confirm regtest gateway health: `curl http://localhost:8080/healthz`
+3. Confirm mainnet gateway health: `curl http://localhost:8081/healthz`
+4. Confirm gRPC-web endpoints are listening:
+   - regtest gateway: `http://localhost:8080`
+   - mainnet gateway: `http://localhost:8081`
+   - direct lightwalletd (bypass regtest): `http://127.0.0.1:9067`
+
+Regtest requires manual block generation to advance height. Once blocks exist,
+browser clients can query `GetLatestBlock` through the gateway.
+
 ## License
 
 See `LICENSE`.
-
