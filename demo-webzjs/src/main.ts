@@ -54,8 +54,9 @@ async function ensureWallet(): Promise<WebWallet> {
     const network = networkInput.value as "main" | "test";
     const url = gatewayUrlInput.value.trim();
     const minConf = Number(minConfInput.value || 0);
+    const minConfUntrusted = minConf;
 
-    wallet = new WebWallet(network, url, minConf);
+    wallet = new WebWallet(network, url, minConf, minConfUntrusted);
     setStatus(`Wallet ready (${network})`);
   }
 
