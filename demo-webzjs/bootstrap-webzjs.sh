@@ -37,6 +37,14 @@ fi
 cd "$WEBZJS_DIR"
 pwd
 
+# Work around upstream pczt missing from ChainSafe fork by switching to the
+# crates.io pczt release.
+perl -0pi -e 's|pczt = \\{ git = \"https://github.com/ChainSafe/librustzcash-nu61\"[^}]*\\}|pczt = { version = \"0.5.1\", default-features = false, features = [\"orchard\", \"sapling\", \"transparent\"] }|s' Cargo.toml
+# Remove any previous git patch we may have added.
+perl -0pi -e 's|\\n\\[patch\\.\\"https://github.com/ChainSafe/librustzcash-nu61\\"\\][^\\[]*||s' Cargo.toml
+
+rg -n "pczt =" Cargo.toml
+
 # Build WebZjs packages with the official justfile recipe.
 # This requires nightly and wasm32 target (per WebZjs README).
 rustup toolchain install nightly-2024-08-07

@@ -55,6 +55,11 @@ cd demo-webzjs
 ./bootstrap-webzjs.sh
 ```
 
+Note: the bootstrap applies a small workaround because the current ChainSafe
+`librustzcash-nu61` fork does not publish the `pczt` crate on that branch. The
+script temporarily sources `pczt` from `zcash/librustzcash` so the build
+completes.
+
 ```sh
 cd demo-webzjs
 npm run dev
