@@ -1,13 +1,18 @@
 # =============================================================================
-# Zcash Web Gateway — Docker Compose (laptop test mode)
+# Zcash Web Gateway — Local regtest stack (no hosting)
 # =============================================================================
 #
+# Runs three services on one machine:
+#   zebrad       — Zcash regtest full node (Rust, Zcash Foundation)
+#   lightwalletd — ZIP-307 gRPC server, connects to zebrad RPC
+#   gateway      — Envoy gRPC-web proxy, connects to lightwalletd gRPC
+#
 # Usage:
-#   cp .env.example .env
 #   docker compose up
 #
-# Points at an external public lightwalletd endpoint.
-# No local zcashd / zebrad node required.
+# Notes:
+#   - Regtest starts instantly but requires manual block generation.
+#   - This stack is for local/dev only (no production hosting).
 #
 # Health check:
 #   curl http://localhost:8080/healthz
@@ -16,27 +21,146 @@
 
 services:
 
-  gateway:
+  # ---------------------------------------------------------------------------
+  # zebrad-init — ensure zebrad cache volume is writable
+  # ---------------------------------------------------------------------------
+  zebrad-init:
+    image: alpine:3.19
+    container_name: zcash-zebrad-init
+    command: ["sh", "-c", "chmod -R 777 /zebrad-cache"]
+    volumes:
+      - zebrad-regtest-data:/zebrad-cache
+    restart: "no"
+    networks:
+      - gateway_net
+
+  # ---------------------------------------------------------------------------
+  # zebrad — Zcash regtest full node
+  # ---------------------------------------------------------------------------
+  zebrad:
+    platform: linux/amd64
+    image: zfnd/zebra:latest
+    container_name: zcash-zebrad-regtest
+
+    command: ["zebrad", "-c", "/etc/zebrad/zebrad.toml", "start"]
+
+    depends_on:
+      zebrad-init:
+        condition: service_completed_successfully
+
+    volumes:
+      - zebrad-regtest-data:/zebrad-cache
+      - ./config/zebrad.toml:/etc/zebrad/zebrad.toml:ro
+
+    # zebrad JSON-RPC is intentionally NOT exposed to the host.
+    # lightwalletd accesses it on the internal Docker network only.
+    # ports:
+    #   - "127.0.0.1:18232:18232"
+
+    healthcheck:
+      test:
+        - "CMD"
+        - "sh"
+        - "-c"
+        - >
+          curl -sf --data-binary
+          '{"jsonrpc":"1.0","id":"hc","method":"getblockchaininfo","params":[]}'
+          -H 'content-type:text/plain;'
+          http://lightwalletd:lightwalletd@127.0.0.1:18232/
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # lightwalletd — ZIP-307 gRPC server
+  # ---------------------------------------------------------------------------
+  lightwalletd:
+    platform: linux/amd64
+    image: electriccoinco/lightwalletd:latest
+    container_name: zcash-lightwalletd-regtest
+
+    command:
+      - "--grpc-bind-addr"
+      - "0.0.0.0:9067"
+      - "--zcash-conf-path"
+      - "/conf/zcash.conf"
+      - "--data-dir"
+      - "/var/lib/lightwalletd/db"
+      - "--log-file"
+      - "/dev/stdout"
+      - "--no-tls-very-insecure"
+
+    volumes:
+      - ./config/zcash.conf:/conf/zcash.conf:ro
+      - lightwalletd-regtest-data:/var/lib/lightwalletd/db
+
+    depends_on:
+      zebrad:
+        condition: service_healthy
+
+    # Expose 9067 to host for direct testing (bypass gateway).
+    ports:
+      - "127.0.0.1:9067:9067"
+
+    healthcheck:
+      test:
+        - "CMD"
+        - "sh"
+        - "-c"
+        - "curl -sS http://127.0.0.1:9068/ >/dev/null"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # gateway-regtest — Envoy gRPC-web proxy (local regtest)
+  # ---------------------------------------------------------------------------
+  gateway-regtest:
     build:
       context: ./gateway
       dockerfile: Dockerfile
     image: zcash-web-gateway:dev
-    container_name: zcash-gateway
+    container_name: zcash-gateway-regtest
 
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
-      # Uncomment for local admin debugging only:
+      - "${GATEWAY_REGTEST_PORT:-8080}:8080"
       # - "127.0.0.1:9901:9901"
 
     environment:
-      UPSTREAM_HOST: ${UPSTREAM_HOST:-mainnet.lightwalletd.com}
-      UPSTREAM_PORT: ${UPSTREAM_PORT:-9067}
+      UPSTREAM_HOST: lightwalletd
+      UPSTREAM_PORT: "9067"
+      UPSTREAM_TLS: "false"
 
     volumes:
       - ./gateway/envoy.yaml.tmpl:/etc/envoy/envoy.yaml.tmpl:ro
-      - ./gateway/cors.yaml:/etc/envoy/cors.yaml:ro
 
-    # depends_on removed — no local upstream service to wait for
+    depends_on:
+      lightwalletd:
+        condition: service_healthy
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
@@ -56,7 +180,43 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ---------------------------------------------------------------------------
+  # gateway-mainnet — Envoy gRPC-web proxy (public mainnet upstream)
+  # ---------------------------------------------------------------------------
+  gateway-mainnet:
+    image: zcash-web-gateway:dev
+    container_name: zcash-gateway-mainnet
+
+    ports:
+      - "${GATEWAY_MAINNET_PORT:-8081}:8080"
+      # - "127.0.0.1:9902:9901"
+
+    environment:
+      UPSTREAM_HOST: ${UPSTREAM_MAINNET_HOST:-mainnet.lightwalletd.com}
+      UPSTREAM_PORT: ${UPSTREAM_MAINNET_PORT:-9067}
+      UPSTREAM_TLS: "true"
+
+    volumes:
+      - ./gateway/envoy.yaml.tmpl:/etc/envoy/envoy.yaml.tmpl:ro
+
+    restart: unless-stopped
+
+    networks:
+      - gateway_net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   gateway_net:
     driver: bridge
     internal: false
+
+volumes:
+  zebrad-regtest-data:
+    name: zcash-web-gateway_zebrad-regtest-data
+  lightwalletd-regtest-data:
+    name: zcash-web-gateway_lightwalletd-regtest-data

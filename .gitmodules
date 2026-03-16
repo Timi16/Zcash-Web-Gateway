@@ -1,0 +1,6 @@
+[submodule "vendor/webzjs"]
+	path = vendor/webzjs
+	url = https://github.com/ChainSafe/WebZjs.git
+[submodule "vendor/librustzcash-nu61"]
+	path = vendor/librustzcash-nu61
+	url = https://github.com/ChainSafe/librustzcash-nu61.git

@@ -1,0 +1,32 @@
+# =============================================================================
+# zebrad.toml — Zebra node configuration for regtest
+# =============================================================================
+#
+# Used by docker-compose.yml.
+# Zebrad runs a local regtest chain and exposes a JSON-RPC endpoint
+# that lightwalletd connects to.
+#
+# Cache: stored in a named Docker volume (zebrad-regtest-data) so chain
+# state survives container restarts.
+#
+# =============================================================================
+
+[network]
+network = "Regtest"
+
+[state]
+# Docker volume mounted at /zebrad-cache — persists across restarts.
+cache_dir = "/zebrad-cache"
+
+[rpc]
+# Bind to all interfaces inside the Docker network so lightwalletd can reach it.
+# Do NOT expose port 18232 in docker-compose ports: — it is internal only.
+listen_addr = "0.0.0.0:18232"
+
+# Lightwalletd connects without credentials on the internal Docker network.
+# For production deployments outside Docker, enable cookie auth or set
+# explicit credentials and update zcash.conf accordingly.
+enable_cookie_auth = false
+
+[tracing]
+filter = "zebrad=info,tower=warn,hyper=warn"

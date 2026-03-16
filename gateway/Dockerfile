@@ -26,11 +26,19 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists/*
 
 COPY envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
-COPY cors.yaml       /etc/envoy/cors.yaml
+# cors.yaml is a reference document only — Envoy static config has no include
+# mechanism so it is not copied into the image. See gateway/cors.yaml for notes.
 
 # Substitute default values for validation only
 RUN UPSTREAM_HOST=localhost UPSTREAM_PORT=9067 \
-    envsubst '${UPSTREAM_HOST} ${UPSTREAM_PORT}' \
+    UPSTREAM_TLS_BLOCK="$(printf '%s\n' \
+      '      transport_socket:' \
+      '        name: envoy.transport_sockets.tls' \
+      '        typed_config:' \
+      '          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext' \
+      '          sni: "localhost"' \
+    )" \
+    envsubst '${UPSTREAM_HOST} ${UPSTREAM_PORT} ${UPSTREAM_TLS_BLOCK}' \
     < /etc/envoy/envoy.yaml.tmpl \
     > /tmp/envoy-validated.yaml
 
@@ -52,15 +60,19 @@ RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends gettext-base && \
     rm -rf /var/lib/apt/lists/*
 
-# Non-root user (uid 101 is the envoy user in the official image)
-USER 101
-
 # Copy validated template and supporting files
 COPY --from=config-validator --chown=101:101 \
      /etc/envoy/envoy.yaml.tmpl /etc/envoy/envoy.yaml.tmpl
 
-COPY --chown=101:101 cors.yaml      /etc/envoy/cors.yaml
-COPY --chown=101:101 entrypoint.sh  /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    chmod 0755 /entrypoint.sh && \
+    chown 101:101 /entrypoint.sh
+
+# Non-root user (uid 101 is the envoy user in the official image)
+USER 101
 
 # Ports:
 #   8080 — gRPC-web listener (browser-facing)

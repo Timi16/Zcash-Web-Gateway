@@ -235,16 +235,10 @@ static_resources:
           explicit_http_config:
             http2_protocol_options: {}
 
-      # ------------------------------------------------------------------
-      # TLS to upstream — required for public lightwalletd endpoints.
-      # SNI is set to the upstream hostname for certificate validation.
-      # ------------------------------------------------------------------
-      transport_socket:
-        name: envoy.transport_sockets.tls
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-          sni: "${UPSTREAM_HOST}"
-
+      # TLS block injected here by entrypoint.sh based on UPSTREAM_TLS env var.
+      # UPSTREAM_TLS=true  → TLS transport_socket with SNI (public endpoints)
+      # UPSTREAM_TLS=false → no block, plaintext HTTP/2 (local regtest stack)
+${UPSTREAM_TLS_BLOCK}
       load_assignment:
         cluster_name: lightwalletd_upstream
         endpoints:
