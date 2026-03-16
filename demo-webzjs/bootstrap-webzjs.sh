@@ -16,6 +16,16 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v just >/dev/null 2>&1; then
+  echo "just is required (install via https://github.com/casey/just)" >&2
+  exit 1
+fi
+
+if ! command -v rustup >/dev/null 2>&1; then
+  echo "rustup is required (install via https://rustup.rs/)" >&2
+  exit 1
+fi
+
 mkdir -p "$VENDOR_DIR"
 
 if [ ! -d "$WEBZJS_DIR/.git" ]; then
@@ -26,10 +36,13 @@ fi
 
 cd "$WEBZJS_DIR"
 pwd
-ls -la crates/webzjs-wallet
 
-# Build the wallet package used by the demo.
-wasm-pack build ./crates/webzjs-wallet --target web
+# Build WebZjs packages with the official justfile recipe.
+# This requires nightly and wasm32 target (per WebZjs README).
+rustup toolchain install nightly-2024-08-07
+rustup target add wasm32-unknown-unknown --toolchain nightly-2024-08-07
+
+RUSTUP_TOOLCHAIN=nightly-2024-08-07 just build
 
 # Install demo deps (points to local package via file:)
 cd "$ROOT_DIR"

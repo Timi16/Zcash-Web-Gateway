@@ -2,7 +2,7 @@ import initWasm, {
   WebWallet,
   initThreadPool,
   generate_seed_phrase
-} from "webzjs-wallet";
+} from "@chainsafe/webzjs-wallet";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const outputEl = document.getElementById("output") as HTMLPreElement;

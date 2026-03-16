@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "webzjs-wallet": "file:../vendor/webzjs/crates/webzjs-wallet/pkg"
+    "@chainsafe/webzjs-wallet": "file:../vendor/webzjs/packages/webzjs-wallet"
   },
   "devDependencies": {
     "typescript": "^5.6.2",
