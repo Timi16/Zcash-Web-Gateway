@@ -16,7 +16,7 @@
 
 services:
 
-  gateway:
+  gateway-mainnet:
     # depends_on removed — no local Zaino container to wait for
     environment:
       UPSTREAM_HOST: ${UPSTREAM_HOST:-zaino.zfnd.org}

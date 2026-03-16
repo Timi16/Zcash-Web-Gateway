@@ -40,6 +40,35 @@ curl http://localhost:8081/healthz
 docker compose -f docker-compose.yml -f docker-compose.zaino.yml up --build
 ```
 
+This swaps the **mainnet** gateway upstream to Zaino while keeping the local
+regtest stack running.
+
+## WebZjs demo (Vite)
+
+This demo connects to the **mainnet** gateway (`http://localhost:8081`) using
+WebZjs in the browser.
+
+Bootstrap WebZjs from source (required because the package is not on npm):
+
+```sh
+cd demo-webzjs
+./bootstrap-webzjs.sh
+```
+
+```sh
+cd demo-webzjs
+npm install
+npm run dev
+```
+
+Open the URL shown by Vite (usually `http://localhost:5173`), then click:
+1. `Initialize Wallet`
+2. `Get Latest Block`
+
+Note: the demo enables `Cross-Origin-Opener-Policy` and
+`Cross-Origin-Embedder-Policy` headers so WebZjs can initialize its WASM thread
+pool in the browser.
+
 ## Milestone self-test (local)
 
 1. Start the stack: `docker compose up --build`

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zcash Web Gateway Demo (WebZjs)</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Zcash Web Gateway</p>
+          <h1>WebZjs Demo — Mainnet via gRPC‑web</h1>
+          <p class="lead">
+            This demo uses WebZjs in the browser and routes all requests through your
+            local Envoy gRPC‑web gateway.
+          </p>
+        </div>
+        <div class="status" id="status">Idle</div>
+      </header>
+
+      <section class="panel">
+        <h2>Gateway Settings</h2>
+        <div class="grid">
+          <label>
+            Gateway URL
+            <input id="gatewayUrl" type="text" value="http://localhost:8081" />
+          </label>
+          <label>
+            Network
+            <select id="network">
+              <option value="main">main</option>
+              <option value="test">test</option>
+            </select>
+          </label>
+          <label>
+            Min Confirmations
+            <input id="minConf" type="number" min="0" value="1" />
+          </label>
+          <button id="connectBtn" class="primary">Initialize Wallet</button>
+        </div>
+        <p class="note">
+          For mainnet demo, keep the default gateway URL (`http://localhost:8081`).
+          Your gateway must be running.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Read‑Only Checks</h2>
+        <div class="grid">
+          <button id="latestBlockBtn">Get Latest Block</button>
+          <button id="walletSummaryBtn">Get Wallet Summary</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Account Playground (Local Only)</h2>
+        <div class="grid">
+          <label>
+            Account Name
+            <input id="accountName" type="text" value="demo" />
+          </label>
+          <label>
+            HD Index
+            <input id="accountIndex" type="number" min="0" value="0" />
+          </label>
+          <label>
+            Birthday Height
+            <input id="birthdayHeight" type="number" min="0" value="0" />
+          </label>
+          <button id="seedBtn">Generate Seed Phrase</button>
+          <button id="createAccountBtn">Create Account</button>
+          <button id="currentAddressBtn">Get Current Address</button>
+        </div>
+        <p class="note">
+          Seed phrases are generated locally in your browser and never sent over the network.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Output</h2>
+        <pre id="output" class="output"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
