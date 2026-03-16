@@ -3,6 +3,7 @@ import initWasm, {
   initThreadPool,
   generate_seed_phrase
 } from "@chainsafe/webzjs-wallet";
+import wasmUrl from "@chainsafe/webzjs-wallet/webzjs_wallet_bg.wasm?url";
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const outputEl = document.getElementById("output") as HTMLPreElement;
@@ -43,8 +44,7 @@ function appendOutput(title: string, payload: unknown) {
 async function ensureWallet(): Promise<WebWallet> {
   if (!wasmReady) {
     setStatus("Initializing WebZjs WASM...");
-    await initWasm();
-
+    await initWasm(wasmUrl);
     const threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
     await initThreadPool(threads);
     wasmReady = true;
