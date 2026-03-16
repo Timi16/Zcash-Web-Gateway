@@ -57,7 +57,6 @@ cd demo-webzjs
 
 ```sh
 cd demo-webzjs
-npm install
 npm run dev
 ```
 

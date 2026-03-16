@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+set -x
 
 ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
 VENDOR_DIR="$ROOT_DIR/../vendor"
@@ -24,9 +25,11 @@ else
 fi
 
 cd "$WEBZJS_DIR"
+pwd
+ls -la crates/webzjs-wallet
 
 # Build the wallet package used by the demo.
-wasm-pack build packages/webzjs-wallet --target web
+wasm-pack build ./crates/webzjs-wallet --target web
 
 # Install demo deps (points to local package via file:)
 cd "$ROOT_DIR"
